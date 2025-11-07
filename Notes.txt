@@ -1,0 +1,54 @@
+Permission Required
+-------------------
+-> Download files
+
+<key>UIFileSharingEnabled</key>
+<true/>
+<key>LSSupportsOpeningDocumentsInPlace</key>
+<true/>
+
+-> Save to photo
+
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>This app saves downloaded media files to your Photos library.</string>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>This app needs access to your Photos to save and view media.</string>
+
+-> HTTP Service (Warning)
+This allows all HTTP requests — not secure, not App Store–safe.
+Use only for testing or local development.
+
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+</dict>
+
+Allow HTTP only for a specific domain (safer)
+If you just want to allow one server (like your video host), use this instead:
+
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+        <key>commondatastorage.googleapis.com</key>
+        <dict>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <true/>
+            <key>NSExceptionRequiresForwardSecrecy</key>
+            <false/>
+        </dict>
+    </dict>
+</dict>
+
+-> Notification
+<key>UIBackgroundModes</key>
+<array>
+    <string>fetch</string>
+    <string>processing</string>
+</array>
+
+
+
