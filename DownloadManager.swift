@@ -40,6 +40,7 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
         
         // 🔵 Send START status
         progressCallback(DownloadProgress.statusStarted(fileName: fileName))
+        completion("Single File Download Started")
         
         // Start using delegate-based session for progress
         let task = session.downloadTask(with: url)
@@ -55,7 +56,7 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
     ) {
         guard urlStrings.count == fileNames.count else {
             progressCallback(DownloadProgress.statusError(fileName: "multiple", message: "Count mismatch"))
-            completion("Url - File Name Count mismatch")
+            completion("Url and File Name Count mismatch")
             return
         }
         
