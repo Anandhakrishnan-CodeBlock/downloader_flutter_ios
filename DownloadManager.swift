@@ -1,170 +1,212 @@
 import Foundation
+import UIKit
 
-class DownloadManager {
-    
+class DownloadManager: NSObject, URLSessionDownloadDelegate {
+
+    // MARK: - Callbacks
+    var progressCallback: (([String: Any]) -> Void)?
+    var completionCallback: ((String) -> Void)?
+
+    // MARK: - Properties
     let saveToPhoto = SaveToPhoto()
-    let notificationService = NotificationService()
+    var fileName: String = ""
+    var saveToPhotosEnabled: Bool = false
+
+    // Custom URLSession with delegate
+    lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
     
-//    func downloadFiles(from urls: [String], folderName: String = "MyDownloads") {
-//        // 1️⃣ Create (or get) the app’s Documents directory
-//        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-//        
-//        // 2️⃣ Create the subfolder inside Documents (e.g., /Documents/MyDownloads)
-//        let folderURL = documentsURL.appendingPathComponent(folderName)
-//        
-//        do {
-//            // Create directory if it doesn't exist
-//            try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
-//            print("📁 Folder created at: \(folderURL.path)")
-//        } catch {
-//            print("❌ Failed to create folder: \(error)")
-//            return
-//        }
-//        
-//        // 3️⃣ Start sequential download of files
-//        func downloadNext(index: Int) {
-//            guard index < urls.count else {
-//                print("✅ All files downloaded to \(folderURL.path)")
-//                return
-//            }
-//            
-//            let urlString = urls[index]
-//            guard let url = URL(string: urlString) else {
-//                print("Invalid URL: \(urlString)")
-//                downloadNext(index: index + 1)
-//                return
-//            }
-//            
-//            let task = URLSession.shared.downloadTask(with: url) { localURL, response, error in
-//                if let error = error {
-//                    print("❌ Download error for \(url.lastPathComponent): \(error)")
-//                    downloadNext(index: index + 1)
-//                    return
-//                }
-//                
-//                guard let localURL = localURL else {
-//                    print("⚠️ No local file URL for \(url)")
-//                    downloadNext(index: index + 1)
-//                    return
-//                }
-//                
-//                // 4️⃣ Destination path inside the created folder
-//                let destinationURL = folderURL.appendingPathComponent(url.lastPathComponent)
-//                
-//                do {
-//                    // Remove file if it already exists
-//                    if FileManager.default.fileExists(atPath: destinationURL.path) {
-//                        try FileManager.default.removeItem(at: destinationURL)
-//                    }
-//                    // Move from temp to destination folder
-//                    try FileManager.default.moveItem(at: localURL, to: destinationURL)
-//                    print("⬇️ \(url.lastPathComponent) saved to \(folderName)")
-//                } catch {
-//                    print("❌ File move error: \(error)")
-//                }
-//                
-//                // Continue with next file
-//                downloadNext(index: index + 1)
-//            }
-//            
-//            task.resume()
-//        }
-//        
-//        downloadNext(index: 0)
-//    }
+    // MARK: - MAIN DOWNLOAD FUNCTION
     
-    // Function to download multiple files in parallel (simultaneously)
-    func downloadFilesParallel(from urls: [String],saveToPhotos: Bool ,completion: @escaping () -> Void) {
+    func downloadSingleFile(
+        from urlString: String,
+        fileName: String,
+        saveToPhotos: Bool,
+        completion: @escaping (String) -> Void,
+        progressCallback: @escaping ([String: Any]) -> Void
+    ) {
+        self.fileName = fileName
+        self.progressCallback = progressCallback
+        self.completionCallback = completion
+        self.saveToPhotosEnabled = saveToPhotos
         
-        // Create a DispatchGroup to track when all downloads are finished.
-        // Think of it like a counter — it enters when a task starts and leaves when it ends.
-        let group = DispatchGroup()
+        guard let url = URL(string: urlString) else {
+            progressCallback(self.statusFailed(fileName: fileName, message: "Invalid URL: \(urlString)"))
+            completion("Invalid URL: \(fileName)")
+            return
+        }
         
-        // Get the app's Documents directory where we will save all downloaded files
-        // This path is inside your app’s sandbox → "On My iPhone → YourAppName"
+        // 🔵 Send START status
+        progressCallback(self.statusStarted(fileName: fileName))
+        
+        // Start using delegate-based session for progress
+        let task = session.downloadTask(with: url)
+        task.resume()
+    }
+    
+    func downloadMultipleFiles(
+            from urlStrings: [String],
+            fileNames: [String],
+            saveToPhotos: Bool,
+            completion: @escaping (String) -> Void,
+            progressCallback: @escaping ([String: Any]) -> Void
+        ) {
+            guard urlStrings.count == fileNames.count else {
+                progressCallback(self.statusError(fileName: "multiple", message: "Count mismatch"))
+                completion("Count mismatch")
+                return
+            }
+            
+            let dispatchGroup = DispatchGroup()
+            
+            for i in urlStrings.indices {
+                let urlString = urlStrings[i]
+                let fname = fileNames[i]
+                
+                guard let url = URL(string: urlString) else {
+                    progressCallback(self.statusFailed(fileName: fname, message: "Invalid URL"))
+                    continue
+                }
+                
+                progressCallback(self.statusStarted(fileName: fname))
+                
+                // Each file uses a temporary delegate wrapper
+                dispatchGroup.enter()
+                
+                let delegate = MultiDownloadHandler(
+                    fileName: fname,
+                    saveToPhotos: saveToPhotos,
+                    progressCallback: progressCallback,
+                    onFinish: {
+                        dispatchGroup.leave()
+                    }
+                )
+                
+                let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+                session.downloadTask(with: url).resume()
+            }
+            
+            dispatchGroup.notify(queue: .main) {
+                completion("All files completed")
+            }
+        }
+    
+    // MARK: - URLSession Delegates
+    
+    // 🔵 PROGRESS (%)
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        
+        guard totalBytesExpectedToWrite > 0 else { return }
+        
+        let progress = Int((Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)) * 100)
+        
+        self.progressCallback?(self.statusProgress(fileName: self.fileName, progress: progress))
+    }
+    
+    // 🔵 COMPLETED → File moved to Documents folder
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let destinationURL = documents.appendingPathComponent(fileName)
         
-        // Loop through all URLs to start downloading them in parallel
-        for urlString in urls {
-            // Convert each string into a valid URL object
-            guard let url = URL(string: urlString) else {
-                print("❌ Invalid URL: \(urlString)")
-                continue  // Skip invalid URLs
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
             }
             
-            // Tell DispatchGroup a new task (download) is starting
-            group.enter()
+            try FileManager.default.moveItem(at: location, to: destinationURL)
             
-            // Notify user download started
-            notificationService.sendNotification(title: "📥 Download Started", body: "\(url.lastPathComponent)")
+            // 🔵 COMPLETED
+            self.progressCallback?(self.statusCompleted(fileName: self.fileName))
             
-            // Create a download task for this URL
-            let task = URLSession.shared.downloadTask(with: url) { localURL, response, error in
-                
-                // This closure runs once the download for this file finishes (success or failure)
-                
-                // Ensure the DispatchGroup knows this download is done before leaving the closure
-                defer { group.leave() }
-                
-                // Handle any error
-                if let error = error {
-                    print("❌ Error downloading \(url.lastPathComponent): \(error)")
-                    return
-                }
-                
-                // localURL is the temporary file location assigned by iOS
-                guard let localURL = localURL else {
-                    print("⚠️ No local file URL for \(url.lastPathComponent)")
-                    return
-                }
-                
-                // Create the final save location inside the Documents folder
-                let destinationURL = documents.appendingPathComponent(url.lastPathComponent)
-                
-                do {
-                    // If a file with the same name already exists, delete it first
-                    if FileManager.default.fileExists(atPath: destinationURL.path) {
-                        try FileManager.default.removeItem(at: destinationURL)
+            // 🔵 SAVE TO PHOTOS
+            if saveToPhotosEnabled {
+                self.saveToPhoto.saveMediaToPhotos(from: destinationURL) { success, _ in
+                    if success {
+                        self.progressCallback?(self.statusSaved(fileName: self.fileName))
                     }
-                    
-                    // Move the downloaded file from temporary folder → to Documents folder
-                    try FileManager.default.moveItem(at: localURL, to: destinationURL)
-                    
-                    // Success message for debugging
-                    print("✅ \(url.lastPathComponent) downloaded and saved.")
-                    
-                    // Notify success for individual file
-                    self.notificationService.sendNotification(title: "✅ Download Complete", body: "\(url.lastPathComponent) saved locally")
-                    
-                    // Save to Photos immediately (if enabled)
-                    if saveToPhotos {
-                        self.saveToPhoto.saveMediaToPhotos(from: destinationURL) { success, _ in
-                            if success {
-                                print("📷 \(url.lastPathComponent) saved to Photos")
-                            }
-                        }
-                    }
-                    
-                } catch {
-                    // Handle any file move errors
-                    print("❌ File move error: \(error)")
                 }
             }
             
-            // Start the download task immediately
-            task.resume()
+        } catch {
+            self.progressCallback?(self.statusError(fileName: self.fileName, message: "File move error: \(error)"))
+            completionCallback?("Download Failed: \(fileName)")
+        }
+    }
+    
+    // 🔵 ERROR or FINAL SUCCESS
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        
+        if let error = error {
+            self.progressCallback?(self.statusFailed(fileName: self.fileName, message: error.localizedDescription))
+            completionCallback?("Download Failed: \(fileName)")
+            return
         }
         
-        // Once all downloads have finished (all .enter() calls are matched by .leave()),
-        // this block will be executed on the main queue.
-        group.notify(queue: .main) {
-            print("🎉 All files downloaded successfully!")
-            completion() // Trigger the completion callback passed into the function
-        }
+        // 🔵 FINAL SUCCESS
+        self.progressCallback?(self.statusSuccess(fileName: self.fileName))
+        self.completionCallback?("Download Success: \(self.fileName)")
     }
 }
 
+extension DownloadManager {
 
+    func statusStarted(fileName: String) -> [String: Any] {
+        return [
+            "status": "started",
+            "fileName": fileName
+        ]
+    }
 
+    func statusProgress(fileName: String, progress: Int) -> [String: Any] {
+        return [
+            "status": "progress",
+            "fileName": fileName,
+            "progress": progress
+        ]
+    }
 
+    func statusCompleted(fileName: String) -> [String: Any] {
+        return [
+            "status": "completed",
+            "fileName": fileName
+        ]
+    }
 
+    func statusSaved(fileName: String) -> [String: Any] {
+        return [
+            "status": "saved",
+            "fileName": fileName
+        ]
+    }
+    
+    func statusSuccess(fileName: String) -> [String: Any] {
+           return ["status": "success", "fileName": fileName]
+       }
+
+    func statusFailed(fileName: String, message: String) -> [String: Any] {
+        return [
+            "status": "failed",
+            "fileName": fileName,
+            "message": message
+        ]
+    }
+
+    func statusError(fileName: String, message: String) -> [String: Any] {
+        return [
+            "status": "error",
+            "fileName": fileName,
+            "message": message
+        ]
+    }
+}
