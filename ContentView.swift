@@ -11,7 +11,9 @@ struct ContentView: View {
     let downloadLink = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
     let downloadLinks = [
         "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+        "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+        "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
     ]
     
     let downloadManager = DownloadManager()
@@ -46,7 +48,7 @@ struct ContentView: View {
             Button("Download Multiple File"){
                 downloadManager.downloadMultipleFiles(
                     from: downloadLinks,
-                    fileNames: ["1","2"],
+                    fileNames: ["1","2","3","4"],
                     saveToPhotos: isChecked,
                     completion: { message in
                        print("\(message)")
