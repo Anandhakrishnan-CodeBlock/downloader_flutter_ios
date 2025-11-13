@@ -2,12 +2,12 @@ import Foundation
 import UIKit
 
 class MultiDownloadHandler: NSObject, URLSessionDownloadDelegate {
-
+    
     let fileName: String
     let saveToPhotos: Bool
     let progressCallback: ([String: Any]) -> Void
     let onFinish: () -> Void
-
+    
     init(fileName: String,
          saveToPhotos: Bool,
          progressCallback: @escaping ([String: Any]) -> Void,
@@ -17,23 +17,19 @@ class MultiDownloadHandler: NSObject, URLSessionDownloadDelegate {
         self.progressCallback = progressCallback
         self.onFinish = onFinish
     }
-
+    
     func urlSession(_ session: URLSession,
                     downloadTask: URLSessionDownloadTask,
                     didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64,
                     totalBytesExpectedToWrite: Int64) {
-
+        
         guard totalBytesExpectedToWrite > 0 else { return }
         let progress = Int(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100)
-        self.progressCallback([
-            "status": "progress",
-            "fileName": self.fileName,
-            "progress": progress
-        ])
+        self.progressCallback(DownloadProgress.statusProgress(fileName: self.fileName, progress: progress))
         
     }
-
+    
     func urlSession(_ session: URLSession,
                     downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
@@ -46,47 +42,30 @@ class MultiDownloadHandler: NSObject, URLSessionDownloadDelegate {
                 try FileManager.default.removeItem(at: destinationURL)
             }
             try FileManager.default.moveItem(at: location, to: destinationURL)
-
-            self.progressCallback([
-                "status": "completed",
-                "fileName": self.fileName
-            ])
             
-
+            self.progressCallback(DownloadProgress.statusCompleted(fileName: self.fileName))
+            
+            
             if saveToPhotos {
                 SaveToPhoto().saveMediaToPhotos(from: destinationURL) { success, _ in
                     if success {
-                    self.progressCallback([
-                        "status": "saved",
-                        "fileName": self.fileName
-                    ])
+                        self.progressCallback(DownloadProgress.statusSaved(fileName: self.fileName))
                     }
                 }
             }
             
         } catch {
-            self.progressCallback([
-                "status": "error",
-                "fileName": self.fileName,
-                "message": "Move error: \(error.localizedDescription)"
-            ])
+            self.progressCallback(DownloadProgress.statusError(fileName: self.fileName, message: "Move error: \(error.localizedDescription)"))
         }
     }
-
+    
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
         if let error = error {
-            self.progressCallback([
-                "status": "failed",
-                "fileName": self.fileName,
-                "message": error.localizedDescription
-            ])
+            self.progressCallback(DownloadProgress.statusFailed(fileName: self.fileName, message: error.localizedDescription))
         } else {
-            self.progressCallback([
-                "status": "success",
-                "fileName": self.fileName
-            ])
+            self.progressCallback(DownloadProgress.statusSuccess(fileName: self.fileName))
         }
         onFinish()
     }

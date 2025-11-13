@@ -2,16 +2,16 @@ import Foundation
 import UIKit
 
 class DownloadManager: NSObject, URLSessionDownloadDelegate {
-
+    
     // MARK: - Callbacks
     var progressCallback: (([String: Any]) -> Void)?
     var completionCallback: ((String) -> Void)?
-
+    
     // MARK: - Properties
     let saveToPhoto = SaveToPhoto()
     var fileName: String = ""
     var saveToPhotosEnabled: Bool = false
-
+    
     // Custom URLSession with delegate
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -33,13 +33,13 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
         self.saveToPhotosEnabled = saveToPhotos
         
         guard let url = URL(string: urlString) else {
-            progressCallback(self.statusFailed(fileName: fileName, message: "Invalid URL: \(urlString)"))
+            progressCallback(DownloadProgress.statusFailed(fileName: fileName, message: "Invalid URL: \(urlString)"))
             completion("Invalid URL: \(fileName)")
             return
         }
         
         // 🔵 Send START status
-        progressCallback(self.statusStarted(fileName: fileName))
+        progressCallback(DownloadProgress.statusStarted(fileName: fileName))
         
         // Start using delegate-based session for progress
         let task = session.downloadTask(with: url)
@@ -47,51 +47,51 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
     }
     
     func downloadMultipleFiles(
-            from urlStrings: [String],
-            fileNames: [String],
-            saveToPhotos: Bool,
-            completion: @escaping (String) -> Void,
-            progressCallback: @escaping ([String: Any]) -> Void
-        ) {
-            guard urlStrings.count == fileNames.count else {
-                progressCallback(self.statusError(fileName: "multiple", message: "Count mismatch"))
-                completion("Count mismatch")
-                return
-            }
-            
-            let dispatchGroup = DispatchGroup()
-            
-            for i in urlStrings.indices {
-                let urlString = urlStrings[i]
-                let fname = fileNames[i]
-                
-                guard let url = URL(string: urlString) else {
-                    progressCallback(self.statusFailed(fileName: fname, message: "Invalid URL"))
-                    continue
-                }
-                
-                progressCallback(self.statusStarted(fileName: fname))
-                
-                // Each file uses a temporary delegate wrapper
-                dispatchGroup.enter()
-                
-                let delegate = MultiDownloadHandler(
-                    fileName: fname,
-                    saveToPhotos: saveToPhotos,
-                    progressCallback: progressCallback,
-                    onFinish: {
-                        dispatchGroup.leave()
-                    }
-                )
-                
-                let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-                session.downloadTask(with: url).resume()
-            }
-            
-            dispatchGroup.notify(queue: .main) {
-                completion("All files completed")
-            }
+        from urlStrings: [String],
+        fileNames: [String],
+        saveToPhotos: Bool,
+        completion: @escaping (String) -> Void,
+        progressCallback: @escaping ([String: Any]) -> Void
+    ) {
+        guard urlStrings.count == fileNames.count else {
+            progressCallback(DownloadProgress.statusError(fileName: "multiple", message: "Count mismatch"))
+            completion("Url - File Name Count mismatch")
+            return
         }
+        
+        let dispatchGroup = DispatchGroup()
+        
+        for i in urlStrings.indices {
+            let urlString = urlStrings[i]
+            let fname = fileNames[i]
+            
+            guard let url = URL(string: urlString) else {
+                progressCallback(DownloadProgress.statusFailed(fileName: fname, message: "Invalid URL"))
+                continue
+            }
+            
+            progressCallback(DownloadProgress.statusStarted(fileName: fname))
+            
+            // Each file uses a temporary delegate wrapper
+            dispatchGroup.enter()
+            
+            let delegate = MultiDownloadHandler(
+                fileName: fname,
+                saveToPhotos: saveToPhotos,
+                progressCallback: progressCallback,
+                onFinish: {
+                    dispatchGroup.leave()
+                }
+            )
+            
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            session.downloadTask(with: url).resume()
+        }
+        
+        dispatchGroup.notify(queue: .main) {
+            completion("All files completed")
+        }
+    }
     
     // MARK: - URLSession Delegates
     
@@ -106,7 +106,7 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
         
         let progress = Int((Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)) * 100)
         
-        self.progressCallback?(self.statusProgress(fileName: self.fileName, progress: progress))
+        self.progressCallback?(DownloadProgress.statusProgress(fileName: self.fileName, progress: progress))
     }
     
     // 🔵 COMPLETED → File moved to Documents folder
@@ -125,19 +125,19 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
             try FileManager.default.moveItem(at: location, to: destinationURL)
             
             // 🔵 COMPLETED
-            self.progressCallback?(self.statusCompleted(fileName: self.fileName))
+            self.progressCallback?(DownloadProgress.statusCompleted(fileName: self.fileName))
             
             // 🔵 SAVE TO PHOTOS
             if saveToPhotosEnabled {
                 self.saveToPhoto.saveMediaToPhotos(from: destinationURL) { success, _ in
                     if success {
-                        self.progressCallback?(self.statusSaved(fileName: self.fileName))
+                        self.progressCallback?(DownloadProgress.statusSaved(fileName: self.fileName))
                     }
                 }
             }
             
         } catch {
-            self.progressCallback?(self.statusError(fileName: self.fileName, message: "File move error: \(error)"))
+            self.progressCallback?(DownloadProgress.statusError(fileName: self.fileName, message: "File move error: \(error)"))
             completionCallback?("Download Failed: \(fileName)")
         }
     }
@@ -148,65 +148,15 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
                     didCompleteWithError error: Error?) {
         
         if let error = error {
-            self.progressCallback?(self.statusFailed(fileName: self.fileName, message: error.localizedDescription))
+            self.progressCallback?(DownloadProgress.statusFailed(fileName: self.fileName, message: error.localizedDescription))
             completionCallback?("Download Failed: \(fileName)")
             return
         }
         
         // 🔵 FINAL SUCCESS
-        self.progressCallback?(self.statusSuccess(fileName: self.fileName))
+        self.progressCallback?(DownloadProgress.statusSuccess(fileName: self.fileName))
         self.completionCallback?("Download Success: \(self.fileName)")
     }
 }
 
-extension DownloadManager {
 
-    func statusStarted(fileName: String) -> [String: Any] {
-        return [
-            "status": "started",
-            "fileName": fileName
-        ]
-    }
-
-    func statusProgress(fileName: String, progress: Int) -> [String: Any] {
-        return [
-            "status": "progress",
-            "fileName": fileName,
-            "progress": progress
-        ]
-    }
-
-    func statusCompleted(fileName: String) -> [String: Any] {
-        return [
-            "status": "completed",
-            "fileName": fileName
-        ]
-    }
-
-    func statusSaved(fileName: String) -> [String: Any] {
-        return [
-            "status": "saved",
-            "fileName": fileName
-        ]
-    }
-    
-    func statusSuccess(fileName: String) -> [String: Any] {
-           return ["status": "success", "fileName": fileName]
-       }
-
-    func statusFailed(fileName: String, message: String) -> [String: Any] {
-        return [
-            "status": "failed",
-            "fileName": fileName,
-            "message": message
-        ]
-    }
-
-    func statusError(fileName: String, message: String) -> [String: Any] {
-        return [
-            "status": "error",
-            "fileName": fileName,
-            "message": message
-        ]
-    }
-}
